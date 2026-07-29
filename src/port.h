@@ -41,9 +41,9 @@
 /* Use C-standard inline attribute */
 #define INLINE                      inline
 #define DEFINE_MUTEX(name)      pthread_mutex_t name = PTHREAD_MUTEX_INITIALIZER
-#define LOCK_MUTEX(name)   pthread_mutex_lock(&(name))
-#define UNLOCK_MUTEX(name) pthread_mutex_unlock(&(name))
-#define DEFINE_COND(name)  pthread_cond_t name = PTHREAD_COND_INITIALIZER;
+#define LOCK_MUTEX(name)        pthread_mutex_lock(&(name))
+#define UNLOCK_MUTEX(name)      pthread_mutex_unlock(&(name))
+#define DEFINE_COND(name)       pthread_cond_t name = PTHREAD_COND_INITIALIZER;
 
 /*
  * COND_WAIT_TIMEOUT - wait on cond/mutex until signaled or timeout_ms elapses.

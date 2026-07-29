@@ -379,7 +379,7 @@ static inline uint16_t modbusWBE(uint8_t *p, uint16_t val)
 static inline uint8_t modbusCheckRangeU16(uint16_t index, uint16_t count)
 {
 	// return (uint16_t)(index + count - 1) < index;
-	return index > U16_MAX - count + 1;
+	return index > UINT16_MAX - count + 1;
 }
 
 /**

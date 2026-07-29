@@ -329,6 +329,7 @@ void ModbusRun(void)
 SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout)
 {
 	SendRetType ret_val = ESEND_NOERR;
+    eMBErrorCode send_err; 
 	/* 0. Accquire the master lock*/
 	LOCK_MUTEX(master_lock);
 	ubRspLength = 0; /* Reset response length before start read */
@@ -344,7 +345,7 @@ SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHOR
 
     /* 3. Prepare and wating to recive or timeout*/
 	PR_INFO("ModbusSend: waiting\n");
-	eMBErrorCode send_err = send_and_wait_logic(timeout);
+	send_err = send_and_wait_logic(timeout);
     /* 4.  Process continues here after wake-up
 	 * Parsing to read input 	
 	 * Application Layer: Parse the received PDU
@@ -354,7 +355,6 @@ SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHOR
 		/* Internal timer woke you up */
 		PR_INFO("Modbus Send: Request timeout\n");	
 		ret_val = ESEND_TIMEOUT;
-        goto out;
 	}
 	else
 	{
@@ -387,9 +387,10 @@ out:
 	return ret_val;
 }
 
-void ModbusReceive (UCHAR *buffer, USHORT *length)
+void ModbusReceive (CHAR *buffer, USHORT *length)
 {
+    /* Lenght should be in number of bytes */
 	PR_INFO("Read %d registers from user\n",ubRspLength);
 	*length = ubRspLength * sizeof(*usRspone);
-	uiPortMemcpy(buffer,(char*)usRspone,*length);	
+	memcpy(buffer,(char*)usRspone, (size_t)length);	
 }

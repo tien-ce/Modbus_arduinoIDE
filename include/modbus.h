@@ -45,6 +45,19 @@ typedef enum
     ESEND_RPINVAL             /*!< Failed to parse the response PDU. */
 } SendRetType;
 
+/* Human-readable string for a SendRetType, e.g. for logging a ModbusSend() result. */
+static inline const CHAR *ModbusErrToStr(SendRetType ret)
+{
+    switch (ret)
+    {
+        case ESEND_NOERR:   return "OK";
+        case ESEND_RQINVAL: return "Invalid request";
+        case ESEND_TIMEOUT: return "Timeout";
+        case ESEND_RPINVAL: return "Invalid response";
+        default:            return "Unknown error";
+    }
+}
+
 /* Initializes the LightModbus master stack and stores baud rate for ModbusStart(). */
 BOOL        ModbusInit(ULONG baud);
 

@@ -99,6 +99,17 @@ types.
       `eMBMasterPoll` locals, loop counters) over to `BOOL`/`UCHAR`/`USHORT`/
       `ULONG`/`INT`/`CHAR`. ✅
 
+- [x] **New, found 2026-07-29: `modbus.cpp` did `#include "lightmodbus/lightmodbus.h"`
+      but the vendored folder was named `light_modbus/` (underscore) — a
+      straight file-not-found compile error.** Never caught because, per the
+      restructuring above, this library was never actually in the compiler's
+      include path (`lib/src/...` isn't a layout PlatformIO's library finder
+      recognizes) — nothing had compiled it yet. Fixed by renaming the
+      vendored folder to `src/lightmodbus/` to match the include. ✅
+- [x] **New, found 2026-07-29: `light_modbus/base.h:4` had `#include <stdint>`**
+      (missing `.h`) — same story, a compile error nobody had hit yet.
+      Fixed to `#include <stdint.h>`. ✅
+
 - [ ] **New, not yet fixed: `mbrtu.cpp:137` (`eMBRTUStop`) calls `timer_remove();`**
       — this function doesn't exist anywhere in the codebase (not in
       `port_timer.cpp`, not an Arduino/FreeRTOS/ESP-IDF API). Looks like a
@@ -130,33 +141,23 @@ types.
 - [x] ~~`mbrtu.c:109` uses global `baudrate` instead of `ulBaudRate`~~ — fixed,
       see 1c. ✅
 
-- [ ] **`Include/mbport.h:74`** — corrupted enum value `MB_PEV_FRAME_RECEIVEDAR_ODD`
-      (looks like a mangled `MB_PAR_ODD` from a bad find/replace).
+- [x] ~~`src/mbport.h:74` — corrupted enum value `MB_PEV_FRAME_RECEIVEDAR_ODD`~~ —
+      user fixed to `MB_PAR_ODD`. ✅
 
-- [ ] **`port_uart.cpp`** calls `ModbusInit(baud)` from inside the UART init layer —
-      layering inversion; re-initializes the master a second time (once by the app
-      explicitly, once implicitly here). Should be removed from this layer (the
-      `extern bool ModbusInit(...)` forward declaration added in round 4 is a
-      stopgap to unblock compilation, not a fix for this).
+- [x] ~~`port_uart.cpp` calls `ModbusInit(baud)` from inside the UART init
+      layer — layering inversion~~ — user removed the call (and the stopgap
+      `extern` declaration) directly from `xMBPortUartInit()`. ✅
 
-- [ ] **New, found during architecture review (2026-07-29):
-      `port_event.cpp`'s `prvModbusWorkerTask` calls `ModbusRun()` with no
-      declaration in scope at all** — not even a stopgap `extern` like
-      `port_uart.cpp` has for `ModbusInit()`. In C++ this is a hard
-      "not declared in this scope" compile error, not a warning. Same class
-      of bug as the `ModbusInit()` issue above, and same root cause below.
-
-- [ ] **New, found during architecture review (2026-07-29): there is no
-      public header for the master layer's own API** (`ModbusInit`,
-      `ModbusStart`, `ModbusSend`, `ModbusReceive`, `ModbusRun`,
-      `ModbusDestroy` — all defined in `modbus.cpp`, none declared in
-      `Include/`, unlike the RTU layer's `mbrtu.h` or the porting contract's
-      `mbport.h`). Every platform file that needs to call up into the master
-      (`port_uart.cpp`, `port_event.cpp`) has to invent its own ad hoc
-      `extern` declaration — `port_uart.cpp` did, `port_event.cpp` didn't,
-      hence the compile error above. A `modbus.h` declaring the public
-      `Modbus*` API would fix both the missing declaration and prevent the
-      next platform file from making the same mistake.
+- [x] **`port_event.cpp`'s `prvModbusWorkerTask` called `ModbusRun()` with no
+      declaration in scope (found during architecture review, 2026-07-29)**
+      — fixed by creating the public `include/modbus.h` (declares
+      `ModbusInit`/`Start`/`Send`/`Receive`/`Run`/`Destroy` +
+      `SendRetType`, previously undeclared anywhere) and including it from
+      `port_event.cpp`. `modbus.cpp` and `modbus_test.cpp` (the app-side
+      consumer in `src/`) now include it too, instead of `modbus_test.cpp`'s
+      previous `#include "modbus_controller/modbus.c"` (also a stale
+      filename — that file is `.cpp`, and including a `.cpp` directly is
+      exactly the kind of thing a real header fixes). ✅
 
 - [x] ~~`mbrtu.cpp:137` — `timer_remove()` doesn't exist~~ — user removed the
       call from `eMBRTUStop()` directly instead. ✅
@@ -180,15 +181,37 @@ types.
       ASCII/TCP-support declarations, unused/unassigned in this RTU-only port.
       Removed from `Include/mbport.h`/`Include/mbrtu.h` (2026-07-29). ✅
 
-- [ ] `xMBPortTimersClose` (`Include/mbport.h:91`) — kept intentionally (thought
+- [ ] `xMBPortTimersClose` (`src/mbport.h:91`) — kept intentionally (thought
       likely useful later), but still has no implementation in
       `port_timer.cpp`. Dead API surface until it's implemented; will be an
       "undefined reference" if anything ever calls it.
 
+## 5. Outside the library — `Test/src/` (found 2026-07-29)
+
+- [ ] **`Test/src/main.cpp` and `Test/src/modbus_test.cpp` both define
+      `setup()`/`loop()`.** PlatformIO compiles every `.cpp` under `src/` by
+      default, so both files build and the linker will hit a duplicate-symbol
+      error for `setup`/`loop`. Whichever of the two is meant to be the
+      active entry point, the other needs to move out of `src/` (e.g. into
+      `examples/` inside the library, per the PlatformIO layout convention)
+      or be excluded via `build_src_filter` in `platformio.ini` — not fixed
+      here since which sketch is "the real one" is a product decision.
+
 ## 4. Already tracked in `PORTING_NOTES.md`
 
-- [ ] `port.h` still `#include <pthread.h>` and mutex macros aren't ported to
-      FreeRTOS primitives (`SemaphoreHandle_t` / `xSemaphoreCreateMutex` / etc).
+- [ ] **`port.h` still `#include <pthread.h>`, mutex/cond macros not ported to
+      FreeRTOS primitives.** Re-opened question (2026-07-29): the build
+      actually succeeded with `pthread.h` included on the ESP32-S3/Arduino
+      target, which contradicts the assumption this item was written under
+      ("pthread.h is not available in the Arduino/ESP32 toolchain"). Likely
+      explanation: ESP-IDF ships a pthread-over-FreeRTOS compatibility
+      component, so `pthread_mutex_t`/`pthread_cond_t` may just work as a
+      real (if heavier) implementation rather than failing to compile — not
+      confirmed, needs checking whether that ESP-IDF pthread component is
+      actually linked in and functionally correct here, vs. just not yet
+      exercised at link time. Until confirmed, don't assume this is fixed —
+      still worth a native `SemaphoreHandle_t` port for weight/consistency
+      even if pthread technically works.
 - [ ] `ENTER_CRITICAL_SECTION()` / `EXIT_CRITICAL_SECTION()` are no-ops — RTU
       timing-sensitive paths are currently unprotected.
 
