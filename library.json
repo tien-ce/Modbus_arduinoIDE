@@ -1,0 +1,17 @@
+{
+  "name": "modbus_controller",
+  "version": "0.1.0",
+  "description": "Modbus RTU master stack (FreeModbus-derived link/master layers over a LightModbus PDU codec), ported from a Linux-kernel driver to Arduino/ESP32.",
+  "keywords": ["modbus", "modbus-rtu", "esp32", "arduino", "freertos"],
+  "authors": [
+    {
+      "name": "Văn Tiến",
+      "email": "tien11102004@gmail.com"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": "arduino",
+  "export": {
+    "include": ["include", "src"]
+  }
+}
