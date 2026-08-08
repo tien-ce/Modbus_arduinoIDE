@@ -31,30 +31,46 @@ static volatile eMBEventType eQueuedEvent;
 static volatile bool xEventInQueue = false;
 static TaskHandle_t xMBTaskHandle = NULL;
 
-/**
- * @brief FreeRTOS task acting as the deferred execution handler ("Bottom Half").
- */
+/* Worker Task Function */
 static void prvModbusWorkerTask(void *pvParameters)
 {
     (void)pvParameters;
-    ModbusRun();
+
+    /* FreeRTOS tasks must run in an infinite loop */
+    for (;;) 
+    {
+        /* 
+         * Block indefinitely (portMAX_DELAY) until another task or ISR 
+         * sends a notification to xMBTaskHandle via xTaskNotifyGive() 
+         * or vTaskNotifyGiveFromISR().
+         */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        /* Process pending Modbus events */
+        ModbusRun();
+    }
 }
 
 bool xMBPortEventInit(void)
 {
     xEventInQueue = false;
 
-    /* Create worker task if it doesn't exist yet */
+    /* 
+     * Check if the worker task has already been created.
+     * If xMBTaskHandle is NULL, the task does not exist yet, so we create it.
+     * If xMBTaskHandle is NOT NULL, we skip creation to avoid duplicate tasks.
+     */
     if (xMBTaskHandle == NULL) {
         BaseType_t xReturned = xTaskCreate(
-            prvModbusWorkerTask,   /* Task function */
-            "MB_Worker",           /* Name */
-            2048,                  /* Stack size in words */
-            NULL,                  /* Task input parameter */
-            configMAX_PRIORITIES - 1, /* High priority for event processing */
-            &xMBTaskHandle         /* Task handle */
+            prvModbusWorkerTask,      /* Task function entry point */
+            "MB_Worker",              /* Text name for debugging */
+            2048,                     /* Stack size in words */
+            NULL,                     /* Task input parameter */
+            configMAX_PRIORITIES - 1, /* Highest user priority */
+            &xMBTaskHandle            /* Stores the created task's handle here */
         );
 
+        /* Return false if memory allocation failed for the task */
         if (xReturned != pdPASS) {
             return false;
         }
@@ -66,18 +82,27 @@ bool xMBPortEventInit(void)
 
 bool xMBPortEventPost(eMBEventType eEvent)
 {
-    /* Critical section protection for variables */
-
+    /* Critical section protection for state variables */
     xEventInQueue = true;
     eQueuedEvent = eEvent;
 
-    /* Wake up the worker task from an ISR or a normal thread */
+    /* 
+     * Ensure the task actually exists before trying to send a notification.
+     * If xMBTaskHandle is NULL, xTaskCreate hasn't run or failed.
+     */
     if (xMBTaskHandle != NULL) {
+        
+        /* Check if we are currently inside an Interrupt Service Routine (ISR) */
         if (xPortInIsrContext()) {
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            
+            /* Send notification safely from ISR context */
             vTaskNotifyGiveFromISR(xMBTaskHandle, &xHigherPriorityTaskWoken);
+            
+            /* Force context switch if a higher priority task was woken */
             portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
         } else {
+            /* Send notification from a standard task/thread context */
             xTaskNotifyGive(xMBTaskHandle);
         }
     }
@@ -97,8 +122,6 @@ bool xMBPortEventGet(eMBEventType *eEvent)
         /* Set xEvent hapened = True */
         xEventHappened = true;
     }
-
-
     return xEventHappened;
 }
 
