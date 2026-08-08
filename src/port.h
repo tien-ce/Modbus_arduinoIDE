@@ -52,13 +52,27 @@ inline pthread_mutex_t *print_mutex(void)
 
 #ifdef ARDUINO
 #include <Arduino.h>
-#define PR_INFO(fmt, ...)   PR_LOCKED(Serial.printf("[INFO] " fmt, ##__VA_ARGS__))
-#define PR_DEBUG(fmt, ...)  PR_LOCKED(Serial.printf("[DEBUG] " fmt, ##__VA_ARGS__))
-#define PR_ERR(fmt, ...)    PR_LOCKED(Serial.printf("[ERROR] " fmt, ##__VA_ARGS__))
+#define PR_OUT(fmt, ...)    Serial.printf(fmt, ##__VA_ARGS__)
 #else
 #include <stdio.h>
-#define PR_INFO(fmt, ...)   PR_LOCKED(printf("[INFO] " fmt, ##__VA_ARGS__))
-#define PR_ERR(fmt, ...)    PR_LOCKED(printf("[ERROR] " fmt, ##__VA_ARGS__))
+#define PR_OUT(fmt, ...)    printf(fmt, ##__VA_ARGS__)
+#endif
+
+#define PR_ERR(fmt, ...)    PR_LOCKED(PR_OUT("[ERROR] " fmt, ##__VA_ARGS__))
+
+/*
+ * PR_INFO/PR_DEBUG are the high-volume, per-byte/per-poll traces used while
+ * bringing up the RTU link — a library consumer including this in their own
+ * project shouldn't get that on their Serial console by default. They compile
+ * to nothing unless the consumer opts in with -D MODBUS_DEBUG_LOG (or
+ * #define MODBUS_DEBUG_LOG before including this header).
+ */
+#ifdef MODBUS_DEBUG_LOG
+#define PR_INFO(fmt, ...)   PR_LOCKED(PR_OUT("[INFO] " fmt, ##__VA_ARGS__))
+#define PR_DEBUG(fmt, ...)  PR_LOCKED(PR_OUT("[DEBUG] " fmt, ##__VA_ARGS__))
+#else
+#define PR_INFO(fmt, ...)   do { } while (0)
+#define PR_DEBUG(fmt, ...)  do { } while (0)
 #endif
 
 /* Use C-standard inline attribute */
