@@ -59,6 +59,10 @@ static ModbusErrorInfo err = MODBUS_NO_ERROR();
 
 static UCHAR    ucMBAddress;    /* Target Slave Address for current transaction */
 static ULONG    baudrate;       /* Stored baudrate for RTU initialization */
+static ModbusSerialConfig_t serial_config; /* Stored RTU mode for RTU initialization */
+static INT      txPin;          /* Stored UART TX pin for RTU initialization */
+static INT      rxPin;          /* Stored UART RX pin for RTU initialization */
+static INT      enPin;          /* Stored RS485 driver-enable pin for RTU initialization (-1 = unused) */
 
 static USHORT					usRspone[MAX_VALUE_RESPONE];	/* Buffer holding return respone for device (using on data call back) */
 static UINT8					ubRspLength;						/* Length of return respone */
@@ -96,7 +100,11 @@ static ModbusError dataCallback(const ModbusMaster *master, const ModbusDataCall
         args->value,
         args->value
         );
-	usRspone[ubRspLength++] = args->value;
+	/* ESP32 is little-endian but Modbus register values are big-endian on
+	 * the wire; ModbusReceive() memcpy's usRspone out as raw bytes, so swap
+	 * here to keep that raw output in genuine Modbus (big-endian) byte order
+	 * instead of leaking the host's native layout to the caller. */
+	usRspone[ubRspLength++] = (USHORT)((args->value << 8) | (args->value >> 8));
     return MODBUS_OK;
 }
 
@@ -241,7 +249,15 @@ static eMBErrorCode eMBMasterPoll( void )
                 {
                     PR_INFO("%s: EV_FRAME_RECEIVED: Received frame\n", Poll_log);
                     eStatus = eMBRTUReceive( &ucRcvAddress, pucMBFrame, &usLength );
-					if (ucRcvAddress != ucMBAddress)
+					if (eStatus != MB_ENOERR)
+					{
+						/* Garbled/short frame (e.g. bus noise or the master's own
+						 * echoed request): ucRcvAddress/usLength were never written
+						 * by eMBRTUReceive, so they must not be touched here. Drop
+						 * the frame and stay in EM_WFR for the real reply/timeout. */
+						PR_ERR("%s: EV_FRAME_RECEIVED: CRC/length error, discarding frame\n", Poll_log);
+					}
+					else if (ucRcvAddress != ucMBAddress)
 					{
 						PR_INFO("%s: EV_FRAME_RECEIVED: Invalid address\n", Poll_log);
 						master_state = EM_PER; /* Move to Processing Error Reply */
@@ -252,10 +268,7 @@ static eMBErrorCode eMBMasterPoll( void )
 						{
 							PR_INFO("pucMBFrame[%d]=0x%x\n",i,pucMBFrame[i]);
 						}
-						if( eStatus == MB_ENOERR )
-						{
-							master_state = EM_PR; /* Move to Processing Reply */
-						}
+						master_state = EM_PR; /* Move to Processing Reply */
 					}
                 }
                 COND_SIGNAL(send_cond);
@@ -273,9 +286,11 @@ static eMBErrorCode eMBMasterPoll( void )
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Initializes the LightModbus Master stack and stores configuration.
+ * @brief Initializes the LightModbus Master stack and stores configuration,
+ * including the UART TX/RX pins and the optional RS485 driver-enable pin
+ * used later by ModbusStart().
  */
-BOOL ModbusInit(ULONG baud)
+BOOL ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pin, INT en_pin)
 {
     ModbusErrorInfo err = modbusMasterInit(
         &master,
@@ -286,18 +301,24 @@ BOOL ModbusInit(ULONG baud)
         modbusMasterDefaultFunctionCount);
 
     if (!modbusIsOk(err)) return FALSE;
-    
+
     PR_INFO("ModBus: Init Master successfully\n");
     baudrate = baud;
+    serial_config = rtu_mode;
+    txPin = tx_pin;
+    rxPin = rx_pin;
+    enPin = en_pin;
     return TRUE;
 }
 
 /**
- * @brief Initializes the Porting Layer (RTU/Serial/Timer) and starts the stack.
+ * @brief Initializes the Porting Layer (RTU/Serial/Timer) with the stored
+ * baud rate, serial config, UART TX/RX pins and RS485 driver-enable pin,
+ * and starts the stack.
  */
 BOOL ModbusStart(void)
 {
-    eMBErrorCode eStatus = eMBRTUInit(baudrate);
+    eMBErrorCode eStatus = eMBRTUInit(baudrate, serial_config, txPin, rxPin, enPin);
     if (eStatus != MB_ENOERR) return FALSE;
     xMBPortEventInit();
     eMBRTUStart();
@@ -387,10 +408,10 @@ out:
 	return ret_val;
 }
 
-void ModbusReceive (CHAR *buffer, USHORT *length)
+void ModbusReceive (UCHAR *buffer, USHORT *length)
 {
     /* Lenght should be in number of bytes */
 	PR_INFO("Read %d registers from user\n",ubRspLength);
 	*length = ubRspLength * sizeof(*usRspone);
-	memcpy(buffer,(char*)usRspone, (size_t)length);	
+	memcpy(buffer,(char*)usRspone, (size_t)*length);	
 }

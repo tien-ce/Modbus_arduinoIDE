@@ -32,10 +32,6 @@
 
 #include "port.h"
 
-#ifdef __cplusplus
-PR_BEGIN_EXTERN_C
-#endif
-
 /* Result of a ModbusSend() call. */
 typedef enum
 {
@@ -58,8 +54,10 @@ static inline const CHAR *ModbusErrToStr(SendRetType ret)
     }
 }
 
-/* Initializes the LightModbus master stack and stores baud rate for ModbusStart(). */
-BOOL        ModbusInit(ULONG baud);
+/* Initializes the LightModbus master stack and stores baud rate/UART TX-RX pins for ModbusStart().
+ * enPin is the RS485 transceiver's driver-enable (DE/RE) pin; pass -1 (default) if the
+ * transceiver auto-directions itself and no pin needs to be toggled. */
+BOOL        ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin = -1);
 
 /* Initializes the porting layer (RTU/serial/timer) and starts the stack. */
 BOOL        ModbusStart(void);
@@ -74,9 +72,6 @@ void        ModbusRun(void);
 SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout);
 
 /* Copies the last successfully parsed response out to the caller. */
-void        ModbusReceive(UCHAR *buffer, USHORT *length);
+void ModbusReceive (UCHAR *buffer, USHORT *length);
 
-#ifdef __cplusplus
-PR_END_EXTERN_C
-#endif
 #endif /* _MODBUS_H */

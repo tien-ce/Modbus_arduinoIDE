@@ -37,10 +37,6 @@
 
 #include "port.h"
 
-#ifdef __cplusplus
-PR_BEGIN_EXTERN_C
-#endif
-
 /* ----------------------- Type definitions ---------------------------------*/
 
 
@@ -99,8 +95,6 @@ void            vMBPortUartRead (UCHAR *buffer, INT *pLength);
 
 void            vMBPortUartWrite (UCHAR *buffer, USHORT usLength);
 
-BOOL            xMBPortUartInit( ULONG ulBaudRate, BOOL (*pxReceiveCallback)(void) );
-#ifdef __cplusplus
-PR_END_EXTERN_C
-#endif
+BOOL            xMBPortUartInit( ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin, void (*pxReceiveCallback)(void) );
+
 #endif

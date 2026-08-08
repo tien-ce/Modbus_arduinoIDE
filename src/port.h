@@ -27,15 +27,38 @@
 /**
  * LOGGING
  * Kernel code used pr_info()/pr_err(); ported to Arduino's Serial output.
+ *
+ * PR_* can be called from more than one FreeRTOS task (e.g. the MB_Worker
+ * task and the application task), and the underlying printf()/Serial.printf()
+ * is not re-entrant, so two interleaved calls tear each other's output apart.
+ * print_mutex() is a plain (non-static) inline function: every translation
+ * unit that includes this header gets the identical definition, and the
+ * linker merges them into one, so the function-local static mutex below is a
+ * single, shared instance for the whole program rather than a private copy
+ * per .cpp file.
  * */
+inline pthread_mutex_t *print_mutex(void)
+{
+    static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    return &mutex;
+}
+
+#define PR_LOCKED(stmt) \
+    do { \
+        pthread_mutex_lock(print_mutex()); \
+        stmt; \
+        pthread_mutex_unlock(print_mutex()); \
+    } while (0)
+
 #ifdef ARDUINO
 #include <Arduino.h>
-#define PR_INFO(fmt, ...)   Serial.printf("[INFO] " fmt, ##__VA_ARGS__)
-#define PR_ERR(fmt, ...)    Serial.printf("[ERROR] " fmt, ##__VA_ARGS__)
+#define PR_INFO(fmt, ...)   PR_LOCKED(Serial.printf("[INFO] " fmt, ##__VA_ARGS__))
+#define PR_DEBUG(fmt, ...)  PR_LOCKED(Serial.printf("[DEBUG] " fmt, ##__VA_ARGS__))
+#define PR_ERR(fmt, ...)    PR_LOCKED(Serial.printf("[ERROR] " fmt, ##__VA_ARGS__))
 #else
 #include <stdio.h>
-#define PR_INFO(fmt, ...)   printf("[INFO] " fmt, ##__VA_ARGS__)
-#define PR_ERR(fmt, ...)    printf("[ERROR] " fmt, ##__VA_ARGS__)
+#define PR_INFO(fmt, ...)   PR_LOCKED(printf("[INFO] " fmt, ##__VA_ARGS__))
+#define PR_ERR(fmt, ...)    PR_LOCKED(printf("[ERROR] " fmt, ##__VA_ARGS__))
 #endif
 
 /* Use C-standard inline attribute */
@@ -64,15 +87,24 @@
     } while (0)
 
 #define COND_SIGNAL(cond)  pthread_cond_signal(&(cond))
-/* Extern C is usually unnecessary in kernel unless strictly linking with C++ */
-#ifdef __cplusplus
-#define PR_BEGIN_EXTERN_C           extern "C" {
-#define PR_END_EXTERN_C             }
-#else
-#define PR_BEGIN_EXTERN_C
-#define PR_END_EXTERN_C
-#endif
 
+/* -------------------------------------------------------------------------- */
+/* UART Configuration Defines (Data - Parity - Stop)                          */
+/* -------------------------------------------------------------------------- */
+typedef enum {
+    RTU_8N1,
+    RTU_8N2,
+    RTU_8E1,
+    RTU_8E2,
+    RTU_8O1,
+    RTU_8O2,
+    RTU_7N1,
+    RTU_7N2,
+    RTU_7E1,
+    RTU_7E2,
+    RTU_7O1,
+    RTU_7O2
+} ModbusSerialConfig_t;
 /**
  * CRITICAL SECTION  
  * */
@@ -101,7 +133,7 @@ typedef uint8_t         UINT8;
 #endif
 
 /* Port function using kernel memcpy */
-static inline UINT8 uiPortMemcpy(UCHAR *des, const UCHAR *src, UINT8 length)
+static inline USHORT uiPortMemcpy(UCHAR *des, const UCHAR *src, USHORT length)
 {
     memcpy(des, src, length);
     return length;

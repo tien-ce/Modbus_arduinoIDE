@@ -32,10 +32,6 @@
 
 #include "port.h"
 
-#ifdef __cplusplus
-PR_BEGIN_EXTERN_C
-#endif
-
 #include "mbport.h"
 
 
@@ -120,7 +116,4 @@ typedef enum
     MB_ETIMEDOUT                /*!< timeout error occurred. */
 } eMBErrorCode;
 
-#ifdef __cplusplus
-PR_END_EXTERN_C
-#endif
 #endif

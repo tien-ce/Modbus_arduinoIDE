@@ -29,23 +29,16 @@
 
 #ifndef _MB_RTU_H
 #define _MB_RTU_H
-
-#ifdef __cplusplus
-PR_BEGIN_EXTERN_C
-#endif
 #include "mb.h"
 
-eMBErrorCode eMBRTUInit(ULONG ulBaudRate);
+eMBErrorCode eMBRTUInit(ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin);
 void            eMBRTUStart( void );
 void            eMBRTUStop( void );
 eMBErrorCode    eMBRTUReceive( UCHAR * pucRcvAddress, UCHAR * pucFrame, USHORT * pusLength );
 eMBErrorCode 	eMBRTUSend( UCHAR ucSlaveAddress, const UCHAR * pucFrame, USHORT usLength );
-BOOL            xMBRTUReceiveFSM( void );
+void            xMBRTUReceiveFSM( void );
 BOOL            xMBRTUTransmitSuccess( void );
 BOOL            xMBRTUTimerT15Expired( void );
 BOOL            xMBRTUTimerT35Expired( void );
 
-#ifdef __cplusplus
-PR_END_EXTERN_C
-#endif
 #endif

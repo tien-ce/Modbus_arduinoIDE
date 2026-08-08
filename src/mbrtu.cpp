@@ -76,7 +76,7 @@ static volatile USHORT usRcvBufferPos;
 
 /* ----------------------- Start implementation -----------------------------*/
 eMBErrorCode
-eMBRTUInit(ULONG ulBaudRate)
+eMBRTUInit(ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin)
 {
     eMBErrorCode    eStatus = MB_ENOERR;
     ULONG           usTimerT35_50us;
@@ -106,7 +106,7 @@ eMBRTUInit(ULONG ulBaudRate)
 		eStatus = MB_EPORTERR;
 	}
 
-    if (xMBPortUartInit (ulBaudRate, xMBRTUReceiveFSM) != TRUE )
+    if (xMBPortUartInit (ulBaudRate, rtu_mode, txPin, rxPin, enPin, xMBRTUReceiveFSM) != TRUE )
     {   
         eStatus = MB_EPORTERR;
     }
@@ -162,6 +162,13 @@ eMBRTUReceive( UCHAR * pucRcvAddress, UCHAR * pucFrame, USHORT * pusLength )
 	}
 	else
 	{
+		PR_DEBUG(" usRcvBufferPos = %d\n",usRcvBufferPos);
+		PR_DEBUG( "ucRTUReBuf[0] = 0x%x\n", ucRTUReBuf[0]);
+		PR_DEBUG( "ucRTUReBuf[1] = 0x%x\n", ucRTUReBuf[1]);
+		PR_DEBUG( "ucRTUReBuf[2] = 0x%x\n", ucRTUReBuf[2]);
+		PR_DEBUG( "ucRTUReBuf[3] = 0x%x\n", ucRTUReBuf[3]);
+		PR_DEBUG( "ucRTUReBuf[4] = 0x%x\n", ucRTUReBuf[4]);
+		PR_DEBUG( "ucRTUReBuf[5] = 0x%x\n", ucRTUReBuf[5]);
 		eStatus = MB_EIO;
 	}
 
@@ -212,10 +219,9 @@ eMBRTUSend( UCHAR ucSlaveAddress, const UCHAR * pucFrame, USHORT usLength )
 
 /* Run on ISR context, not print or sleep */
 
-BOOL
+void
 xMBRTUReceiveFSM( void )
 {
-    BOOL            xTaskNeedSwitch = FALSE;
 	UCHAR			ucRTUTmpBuf[MAX_PER_RECEIVE];
 	INT				usRTUReceiveCount;
     /* Read the characters. */
@@ -261,6 +267,9 @@ xMBRTUReceiveFSM( void )
 			uiPortMemcpy(ucRTUReBuf+usRcvBufferPos,ucRTUTmpBuf,usRTUReceiveCount);
 			usRcvBufferPos += usRTUReceiveCount;
 			eRcvState = STATE_RX_RCV;
+			/* Reset t3.5 timer so it measures silence since the LAST
+			 * character, not just the first one of this frame. */
+			vMBPortTimersStart(  );
         }
         else
         {
@@ -268,7 +277,6 @@ xMBRTUReceiveFSM( void )
         }
         break;
     }
-    return xTaskNeedSwitch;
 }
 
 BOOL
