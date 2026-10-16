@@ -76,7 +76,7 @@ static volatile USHORT usRcvBufferPos;
 
 /* ----------------------- Start implementation -----------------------------*/
 eMBErrorCode
-eMBRTUInit(ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin)
+eMBRTUInit(HardwareSerial &serial, ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin)
 {
     eMBErrorCode    eStatus = MB_ENOERR;
     ULONG           usTimerT35_50us;
@@ -106,7 +106,7 @@ eMBRTUInit(ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin
 		eStatus = MB_EPORTERR;
 	}
 
-    if (xMBPortUartInit (ulBaudRate, rtu_mode, txPin, rxPin, enPin, xMBRTUReceiveFSM) != TRUE )
+    if (xMBPortUartInit (serial, ulBaudRate, rtu_mode, txPin, rxPin, enPin, xMBRTUReceiveFSM) != TRUE )
     {   
         eStatus = MB_EPORTERR;
     }

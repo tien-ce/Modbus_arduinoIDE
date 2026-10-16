@@ -31,8 +31,9 @@ static SerialConfig get_arduino_serial_config(ModbusSerialConfig_t rtu_mode)
 }
 
 /**
- * @brief Initializes UART2 with the given baud rate, serial config, TX/RX pins
+ * @brief Initializes the given UART with the baud rate, serial config, TX/RX pins
  * and optional RS485 driver-enable pin.
+ * @param serial HardwareSerial port to use (e.g. Serial1, Serial2). Must outlive the stack.
  * @param baudrate Baud rate in bits per second.
  * @param rtu_mode Custom RTU macro (e.g., RTU_8N1, RTU_8E1).
  * @param txPin UART TX pin connected to the RS485 transceiver.
@@ -41,9 +42,9 @@ static SerialConfig get_arduino_serial_config(ModbusSerialConfig_t rtu_mode)
  * transceiver auto-directions itself and no pin needs to be toggled.
  * @param recive_callback Callback invoked from ISR context on byte reception.
  */
-bool xMBPortUartInit( uint32_t baudrate, ModbusSerialConfig_t rtu_mode, int txPin, int rxPin, int enPin, void (*recive_callback)(void) )
+bool xMBPortUartInit( HardwareSerial &serial, uint32_t baudrate, ModbusSerialConfig_t rtu_mode, int txPin, int rxPin, int enPin, void (*recive_callback)(void) )
 {
-    pMBSerial = &Serial2;
+    pMBSerial = &serial;
 
     pMBSerial->begin(baudrate, get_arduino_serial_config(rtu_mode), rxPin, txPin);
     if (!(*pMBSerial))

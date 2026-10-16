@@ -58,6 +58,7 @@ static ModbusMaster    master;
 static ModbusErrorInfo err = MODBUS_NO_ERROR();
 
 static UCHAR    ucMBAddress;    /* Target Slave Address for current transaction */
+static HardwareSerial *pSerial = NULL; /* Stored UART port for RTU initialization */
 static ULONG    baudrate;       /* Stored baudrate for RTU initialization */
 static ModbusSerialConfig_t serial_config; /* Stored RTU mode for RTU initialization */
 static INT      txPin;          /* Stored UART TX pin for RTU initialization */
@@ -290,7 +291,7 @@ static eMBErrorCode eMBMasterPoll( void )
  * including the UART TX/RX pins and the optional RS485 driver-enable pin
  * used later by ModbusStart().
  */
-BOOL ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pin, INT en_pin)
+BOOL ModbusInit(HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pin, INT en_pin)
 {
     ModbusErrorInfo err = modbusMasterInit(
         &master,
@@ -303,6 +304,7 @@ BOOL ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pi
     if (!modbusIsOk(err)) return FALSE;
 
     PR_INFO("ModBus: Init Master successfully\n");
+    pSerial = &serial;
     baudrate = baud;
     serial_config = rtu_mode;
     txPin = tx_pin;
@@ -318,7 +320,8 @@ BOOL ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pi
  */
 BOOL ModbusStart(void)
 {
-    eMBErrorCode eStatus = eMBRTUInit(baudrate, serial_config, txPin, rxPin, enPin);
+    if (pSerial == NULL) return FALSE;
+    eMBErrorCode eStatus = eMBRTUInit(*pSerial, baudrate, serial_config, txPin, rxPin, enPin);
     if (eStatus != MB_ENOERR) return FALSE;
     xMBPortEventInit();
     eMBRTUStart();

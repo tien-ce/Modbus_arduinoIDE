@@ -95,6 +95,6 @@ void            vMBPortUartRead (UCHAR *buffer, INT *pLength);
 
 void            vMBPortUartWrite (UCHAR *buffer, USHORT usLength);
 
-BOOL            xMBPortUartInit( ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin, void (*pxReceiveCallback)(void) );
+BOOL            xMBPortUartInit( HardwareSerial &serial, ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin, void (*pxReceiveCallback)(void) );
 
 #endif

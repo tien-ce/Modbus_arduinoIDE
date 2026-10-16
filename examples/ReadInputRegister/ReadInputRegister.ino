@@ -23,7 +23,7 @@
 void setup() {
     Serial.begin(115200);
 
-    bool ok = ModbusInit(9600, RTU_8N1, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
+    bool ok = ModbusInit(Serial2, 9600, RTU_8N1, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
     if (!ok) {
         Serial.println("Init Modbus failed!");
         return;

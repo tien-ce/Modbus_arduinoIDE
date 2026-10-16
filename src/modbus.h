@@ -56,8 +56,9 @@ static inline const CHAR *ModbusErrToStr(SendRetType ret)
 
 /* Initializes the LightModbus master stack and stores baud rate/UART TX-RX pins for ModbusStart().
  * enPin is the RS485 transceiver's driver-enable (DE/RE) pin; pass -1 (default) if the
- * transceiver auto-directions itself and no pin needs to be toggled. */
-BOOL        ModbusInit(ULONG baud, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin = -1);
+ * transceiver auto-directions itself and no pin needs to be toggled.
+ * serial is the HardwareSerial port to run Modbus on (e.g. Serial1, Serial2). */
+BOOL        ModbusInit(HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin = -1);
 
 /* Initializes the porting layer (RTU/serial/timer) and starts the stack. */
 BOOL        ModbusStart(void);

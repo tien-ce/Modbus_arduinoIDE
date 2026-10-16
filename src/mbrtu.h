@@ -31,7 +31,7 @@
 #define _MB_RTU_H
 #include "mb.h"
 
-eMBErrorCode eMBRTUInit(ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin);
+eMBErrorCode eMBRTUInit(HardwareSerial &serial, ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin);
 void            eMBRTUStart( void );
 void            eMBRTUStop( void );
 eMBErrorCode    eMBRTUReceive( UCHAR * pucRcvAddress, UCHAR * pucFrame, USHORT * pusLength );
