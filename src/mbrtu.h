@@ -31,14 +31,14 @@
 #define _MB_RTU_H
 #include "mb.h"
 
-eMBErrorCode eMBRTUInit(HardwareSerial &serial, ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin);
-void            eMBRTUStart( void );
-void            eMBRTUStop( void );
-eMBErrorCode    eMBRTUReceive( UCHAR * pucRcvAddress, UCHAR * pucFrame, USHORT * pusLength );
-eMBErrorCode 	eMBRTUSend( UCHAR ucSlaveAddress, const UCHAR * pucFrame, USHORT usLength );
-void            xMBRTUReceiveFSM( void );
-BOOL            xMBRTUTransmitSuccess( void );
-BOOL            xMBRTUTimerT15Expired( void );
-BOOL            xMBRTUTimerT35Expired( void );
+/* Configuration (serial port, baud, pins...) is read from mb, filled in by ModbusInit(). */
+eMBErrorCode    eMBRTUInit( ModbusRS485 *mb );
+void            eMBRTUStart( ModbusRS485 *mb );
+void            eMBRTUStop( ModbusRS485 *mb );
+eMBErrorCode    eMBRTUReceive( ModbusRS485 *mb, UCHAR * pucRcvAddress, UCHAR * pucFrame, USHORT * pusLength );
+eMBErrorCode 	eMBRTUSend( ModbusRS485 *mb, UCHAR ucSlaveAddress, const UCHAR * pucFrame, USHORT usLength );
+void            xMBRTUReceiveFSM( ModbusRS485 *mb );
+BOOL            xMBRTUTransmitSuccess( ModbusRS485 *mb );
+BOOL            xMBRTUTimerT35Expired( ModbusRS485 *mb );
 
 #endif

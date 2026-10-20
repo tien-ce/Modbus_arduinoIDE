@@ -73,28 +73,27 @@ typedef enum
 } eMBParity;
 
 /* ----------------------- Supporting functions -----------------------------*/
-BOOL            xMBPortEventInit( void );
+BOOL            xMBPortEventInit( ModbusRS485 *mb );
 
-BOOL            xMBPortEventPost( eMBEventType eEvent );
+BOOL            xMBPortEventPost( ModbusRS485 *mb, eMBEventType eEvent );
 
-BOOL            xMBPortEventGet(  /*@out@ */ eMBEventType * eEvent );
+BOOL            xMBPortEventGet( ModbusRS485 *mb, /*@out@ */ eMBEventType * eEvent );
 
-void			vMBPortEventDeinit(void);
+void			vMBPortEventDeinit( ModbusRS485 *mb );
 
 /* ----------------------- Timers functions ---------------------------------*/
-BOOL            xMBPortTimersInit( USHORT usTimeOut50us );
+BOOL            xMBPortTimersInit( ModbusRS485 *mb, USHORT usTimeOut50us );
 
-void            xMBPortTimersClose( void );
+void            vMBPortTimersStart( ModbusRS485 *mb );
 
-void            vMBPortTimersStart( void );
-
-void            vMBPortTimersCancel( void );
+void            vMBPortTimersCancel( ModbusRS485 *mb );
 
 /* ------------------------ Uart functions ----------------------------------*/
-void            vMBPortUartRead (UCHAR *buffer, INT *pLength);
+void            vMBPortUartRead ( ModbusRS485 *mb, UCHAR *buffer, INT *pLength);
 
-void            vMBPortUartWrite (UCHAR *buffer, USHORT usLength);
+void            vMBPortUartWrite ( ModbusRS485 *mb, UCHAR *buffer, USHORT usLength);
 
-BOOL            xMBPortUartInit( HardwareSerial &serial, ULONG ulBaudRate, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin, void (*pxReceiveCallback)(void) );
+/* Opens mb->serial using the baud/config/pins stored in mb. */
+BOOL            xMBPortUartInit( ModbusRS485 *mb );
 
 #endif

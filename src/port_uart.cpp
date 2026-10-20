@@ -2,8 +2,9 @@
 #include <HardwareSerial.h>
 #include <port.h>
 #include <mbport.h>
-static HardwareSerial *pMBSerial = NULL;
-static int enablePin = -1; /* RS485 driver-enable (DE/RE) pin; -1 = transceiver auto-directions itself */
+#include <mbrtu.h>
+#include <mbinst.h>
+
 /**
  * @brief Direct mapping from RTU mode macros to Arduino SerialConfig.
  * @param rtu_mode Custom RTU macro (e.g., RTU_8N1, RTU_8E1).
@@ -31,65 +32,61 @@ static SerialConfig get_arduino_serial_config(ModbusSerialConfig_t rtu_mode)
 }
 
 /**
- * @brief Initializes the given UART with the baud rate, serial config, TX/RX pins
- * and optional RS485 driver-enable pin.
- * @param serial HardwareSerial port to use (e.g. Serial1, Serial2). Must outlive the stack.
- * @param baudrate Baud rate in bits per second.
- * @param rtu_mode Custom RTU macro (e.g., RTU_8N1, RTU_8E1).
- * @param txPin UART TX pin connected to the RS485 transceiver.
- * @param rxPin UART RX pin connected to the RS485 transceiver.
- * @param enPin RS485 transceiver driver-enable (DE/RE) pin, or -1 if the
- * transceiver auto-directions itself and no pin needs to be toggled.
- * @param recive_callback Callback invoked from ISR context on byte reception.
+ * @brief Opens mb->serial with the baud rate, serial config, TX/RX pins and
+ * optional RS485 driver-enable pin stored in the instance. The receive
+ * callback (invoked from ISR context on byte reception) feeds the RTU
+ * receive FSM of the same instance.
  */
-bool xMBPortUartInit( HardwareSerial &serial, uint32_t baudrate, ModbusSerialConfig_t rtu_mode, int txPin, int rxPin, int enPin, void (*recive_callback)(void) )
+bool xMBPortUartInit( ModbusRS485 *mb )
 {
-    pMBSerial = &serial;
+    HardwareSerial *serial = mb->serial;
+    if (serial == NULL) return false;
 
-    pMBSerial->begin(baudrate, get_arduino_serial_config(rtu_mode), rxPin, txPin);
-    if (!(*pMBSerial))
+    serial->begin(mb->baudrate, get_arduino_serial_config(mb->serial_config), mb->rxPin, mb->txPin);
+    if (!(*serial))
     {
         return false;
     }
 
     /* Register callback */
-    pMBSerial->onReceive(recive_callback);
+    serial->onReceive([mb]() { xMBRTUReceiveFSM(mb); });
 
-    enablePin = enPin;
-    if (enablePin >= 0)
+    if (mb->enPin >= 0)
     {
-        pinMode(enablePin, OUTPUT);
-        digitalWrite(enablePin, LOW); /* Default to receive mode */
+        pinMode(mb->enPin, OUTPUT);
+        digitalWrite(mb->enPin, LOW); /* Default to receive mode */
     }
 
     return true;
 }
 
-void vMBPortUartRead (uint8_t *buffer, int *length)
+void vMBPortUartRead (ModbusRS485 *mb, uint8_t *buffer, int *length)
 {
-    if (pMBSerial == NULL) return;
+    HardwareSerial *serial = mb->serial;
+    if (serial == NULL) return;
 
-    *length = pMBSerial->available();
+    *length = serial->available();
     for (int i = 0; i < *length; i++)
     {
-        buffer[i] = (uint8_t)pMBSerial->read();
+        buffer[i] = (uint8_t)serial->read();
     }
 }
 
-void vMBPortUartWrite (uint8_t *buffer, uint16_t length)
+void vMBPortUartWrite (ModbusRS485 *mb, uint8_t *buffer, uint16_t length)
 {
-    if (pMBSerial == NULL) return;
+    HardwareSerial *serial = mb->serial;
+    if (serial == NULL) return;
 
-    if (enablePin >= 0)
+    if (mb->enPin >= 0)
     {
-        digitalWrite(enablePin, HIGH); /* Switch RS485 transceiver to transmit */
+        digitalWrite(mb->enPin, HIGH); /* Switch RS485 transceiver to transmit */
     }
 
-    pMBSerial->write(buffer, length);
+    serial->write(buffer, length);
 
-    if (enablePin >= 0)
+    if (mb->enPin >= 0)
     {
-        pMBSerial->flush(); /* Wait for the last byte to physically leave the UART */
-        digitalWrite(enablePin, LOW); /* Switch back to receive */
+        serial->flush(); /* Wait for the last byte to physically leave the UART */
+        digitalWrite(mb->enPin, LOW); /* Switch back to receive */
     }
 }

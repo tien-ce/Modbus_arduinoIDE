@@ -142,7 +142,7 @@ sequenceDiagram
     │  =============================================================================================
     │  3. HARDWARE & ISR CONTEXT (Slave Transmits Response)
     │  =============================================================================================
-    │       Physical RS485 Bus ──► UART RX ──► Serial2.onReceive ISR (xMBRTUReceiveFSM)
+    │       Physical RS485 Bus ──► UART RX ──► HardwareSerial.onReceive ISR (xMBRTUReceiveFSM(mb))
     │                                                    │ (Restarts T35 timer per byte)
     │                                                    v
     │                                          T35 Timer Expiration ISR (test_hrtimer_handler)

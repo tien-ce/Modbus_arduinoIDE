@@ -34,6 +34,7 @@
 #include "mb.h"
 #include "mbport.h"
 #include "mbrtu.h"
+#include "mbinst.h"
 #include "modbus.h"
 
 /* -------------------------------------------------------------------------- */
@@ -41,39 +42,9 @@
 /* -------------------------------------------------------------------------- */
 
 #define MB_ADDRESS_BROADCAST 0
-#define MAX_PDU_SIZE         253
-#define MAX_VALUE_RESPONE	 10					/* We assume that no senosor hold value in more than 10 registers */
 
-/* -------------------------------------------------------------------------- */
-/* Global Variables                              */
-/* -------------------------------------------------------------------------- */
-/* Lock for master, only thread can use in time,
- * migth be many threads from user try to read on modbus bus
- * */
-DEFINE_MUTEX(master_lock);
-DEFINE_MUTEX(send_mutex);
-DEFINE_COND(send_cond);
-
-static ModbusMaster    master;
-static ModbusErrorInfo err = MODBUS_NO_ERROR();
-
-static UCHAR    ucMBAddress;    /* Target Slave Address for current transaction */
-static HardwareSerial *pSerial = NULL; /* Stored UART port for RTU initialization */
-static ULONG    baudrate;       /* Stored baudrate for RTU initialization */
-static ModbusSerialConfig_t serial_config; /* Stored RTU mode for RTU initialization */
-static INT      txPin;          /* Stored UART TX pin for RTU initialization */
-static INT      rxPin;          /* Stored UART RX pin for RTU initialization */
-static INT      enPin;          /* Stored RS485 driver-enable pin for RTU initialization (-1 = unused) */
-
-static USHORT					usRspone[MAX_VALUE_RESPONE];	/* Buffer holding return respone for device (using on data call back) */
-static UINT8					ubRspLength;						/* Length of return respone */
-static UCHAR					pucMBFrame[MAX_PDU_SIZE];		/* Buffer holding value from RTU Layer before put it into step parsing */
-static USHORT					usLength;
-
-static eMasterType     master_state = EM_IDLE;
-
-static eMBErrorCode    eStatus = MB_ENOERR;
-static eMBEventType    eEvent;
+/* All state (master, locks, buffers, ...) lives in the ModbusRS485 instance
+ * passed in by the caller, see mbinst.h. */
 
 /* -------------------------------------------------------------------------- */
 /* LightModbus Callbacks                          */
@@ -85,6 +56,7 @@ static eMBEventType    eEvent;
  */
 static ModbusError dataCallback(const ModbusMaster *master, const ModbusDataCallbackArgs *args)
 {
+    ModbusRS485 *mb = (ModbusRS485 *)modbusMasterGetUserPointer(master);
     CHAR typechar = '?';
     switch (args->type)
     {
@@ -105,7 +77,7 @@ static ModbusError dataCallback(const ModbusMaster *master, const ModbusDataCall
 	 * the wire; ModbusReceive() memcpy's usRspone out as raw bytes, so swap
 	 * here to keep that raw output in genuine Modbus (big-endian) byte order
 	 * instead of leaking the host's native layout to the caller. */
-	usRspone[ubRspLength++] = (USHORT)((args->value << 8) | (args->value >> 8));
+	mb->usRspone[mb->ubRspLength++] = (USHORT)((args->value << 8) | (args->value >> 8));
     return MODBUS_OK;
 }
 
@@ -137,29 +109,29 @@ static ModbusError exceptionCallback(const ModbusMaster *master, uint8_t address
  *
  * Return: 0 on success, or -1 if the operation timed out.
  */
-static eMBErrorCode send_and_wait_logic(INT timeout_ms)
+static eMBErrorCode send_and_wait_logic(ModbusRS485 *mb, INT timeout_ms)
 {
     BOOL timed_out = FALSE;
 
     /* Lock the mutex to protect state evaluation and condition wait */
-    LOCK_MUTEX(send_mutex);
+    LOCK_MUTEX(mb->send_mutex);
 
     /* Trigger the hardware/event operation */
-    xMBPortEventPost(EV_MASTER_SEND_REQUEST);
+    xMBPortEventPost(mb, EV_MASTER_SEND_REQUEST);
 
     /*
      * Check condition before sleeping to prevent race conditions.
      * Loop handles potential spurious wakeups.
      */
-    while (master_state != EM_PR && master_state != EM_PER) {
-        COND_WAIT_TIMEOUT(send_cond, send_mutex, timeout_ms, timed_out);
+    while (mb->master_state != EM_PR && mb->master_state != EM_PER) {
+        COND_WAIT_TIMEOUT(mb->send_cond, mb->send_mutex, timeout_ms, timed_out);
         if (timed_out) {
             break; /* Timeout reached */
         }
     }
 
     /* Release lock after state check/wait completes */
-    UNLOCK_MUTEX(send_mutex);
+    UNLOCK_MUTEX(mb->send_mutex);
 
     return timed_out ? MB_ETIMEDOUT : MB_ENOERR;
 }
@@ -169,6 +141,8 @@ static eMBErrorCode send_and_wait_logic(INT timeout_ms)
  */
 static INT buildreq(ModbusMaster *master, UCHAR function, USHORT startAddress, USHORT quantity)
 {
+    ModbusErrorInfo err = MODBUS_NO_ERROR();
+
     switch (function)
     {
         case 1:
@@ -199,17 +173,19 @@ static INT buildreq(ModbusMaster *master, UCHAR function, USHORT startAddress, U
 }
 
 /**
- * @brief Main State Machine for Modbus Master. 
+ * @brief Main State Machine for Modbus Master.
  * Handles Event dispatching and State transitions.
  */
-static eMBErrorCode eMBMasterPoll( void )
+static eMBErrorCode eMBMasterPoll( ModbusRS485 *mb )
 {
     CHAR            Poll_log[17] = "MBMasterPoll";
+    eMBErrorCode    eStatus = MB_ENOERR;
+    eMBEventType    eEvent;
 
     PR_INFO("%s: Event trigger\n", Poll_log);
 
     /* Check for events from the porting layer (Timer/Serial) */
-    if( xMBPortEventGet( &eEvent ) == TRUE )
+    if( xMBPortEventGet( mb, &eEvent ) == TRUE )
     {
         switch ( eEvent )
         {
@@ -217,7 +193,7 @@ static eMBErrorCode eMBMasterPoll( void )
                 break;
 
             case EV_MASTER_SEND_REQUEST:
-                if(master_state != EM_IDLE)
+                if(mb->master_state != EM_IDLE)
                 {
                     PR_ERR("%s: Something go wrong, previous request haven't completely handled\n", Poll_log);
                     eStatus = MB_EINVAL;
@@ -227,21 +203,22 @@ static eMBErrorCode eMBMasterPoll( void )
                     PR_INFO("%s: Modbus master request send\n", Poll_log);
                     /* Dispatch via RTU Link Layer */
                     eMBRTUSend(
-                        ucMBAddress,
-                        modbusMasterGetRequest(&master),
-                        modbusMasterGetRequestLength(&master)
-                    ); 
-                    master_state = EM_WFR;
+                        mb,
+                        mb->ucMBAddress,
+                        modbusMasterGetRequest(&mb->master),
+                        modbusMasterGetRequestLength(&mb->master)
+                    );
+                    mb->master_state = EM_WFR;
                 }
                 break;
 
             case EV_FRAME_RECEIVED:
                 /* Accquire lock to modify shread state safely,
                  * After send_wait_logic puted into wait queue safely*/
-                LOCK_MUTEX(send_mutex); 
+                LOCK_MUTEX(mb->send_mutex);
                 /* Validation: Only accept frames when waiting for a reply */
 				UCHAR ucRcvAddress;
-                if(master_state != EM_WFR)
+                if(mb->master_state != EM_WFR)
                 {
                     PR_ERR("%s: EV_FRAME_RECEIVED: Unexpected frame, master not in WFR state\n", Poll_log);
                     eStatus = MB_EINVAL;
@@ -249,7 +226,7 @@ static eMBErrorCode eMBMasterPoll( void )
                 else
                 {
                     PR_INFO("%s: EV_FRAME_RECEIVED: Received frame\n", Poll_log);
-                    eStatus = eMBRTUReceive( &ucRcvAddress, pucMBFrame, &usLength );
+                    eStatus = eMBRTUReceive( mb, &ucRcvAddress, mb->pucMBFrame, &mb->usLength );
 					if (eStatus != MB_ENOERR)
 					{
 						/* Garbled/short frame (e.g. bus noise or the master's own
@@ -258,22 +235,22 @@ static eMBErrorCode eMBMasterPoll( void )
 						 * the frame and stay in EM_WFR for the real reply/timeout. */
 						PR_ERR("%s: EV_FRAME_RECEIVED: CRC/length error, discarding frame\n", Poll_log);
 					}
-					else if (ucRcvAddress != ucMBAddress)
+					else if (ucRcvAddress != mb->ucMBAddress)
 					{
 						PR_INFO("%s: EV_FRAME_RECEIVED: Invalid address\n", Poll_log);
-						master_state = EM_PER; /* Move to Processing Error Reply */
+						mb->master_state = EM_PER; /* Move to Processing Error Reply */
 					}
 					else
 					{
-						for(INT i = 0; i < usLength; i++)
+						for(INT i = 0; i < mb->usLength; i++)
 						{
-							PR_INFO("pucMBFrame[%d]=0x%x\n",i,pucMBFrame[i]);
+							PR_INFO("pucMBFrame[%d]=0x%x\n",i,mb->pucMBFrame[i]);
 						}
-						master_state = EM_PR; /* Move to Processing Reply */
+						mb->master_state = EM_PR; /* Move to Processing Reply */
 					}
                 }
-                COND_SIGNAL(send_cond);
-                UNLOCK_MUTEX(send_mutex);
+                COND_SIGNAL(mb->send_cond);
+                UNLOCK_MUTEX(mb->send_mutex);
                 break;
             default:
                 break;
@@ -287,14 +264,16 @@ static eMBErrorCode eMBMasterPoll( void )
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Initializes the LightModbus Master stack and stores configuration,
- * including the UART TX/RX pins and the optional RS485 driver-enable pin
- * used later by ModbusStart().
+ * @brief Initializes the LightModbus Master stack of the given RS485 instance and
+ * stores its configuration, including the UART port, TX/RX pins and the
+ * optional RS485 driver-enable pin used later by ModbusStart().
  */
-BOOL ModbusInit(HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pin, INT en_pin)
+BOOL ModbusInit(ModbusRS485 &inst, HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT tx_pin, INT rx_pin, INT en_pin)
 {
+    ModbusRS485 *mb = &inst;
+
     ModbusErrorInfo err = modbusMasterInit(
-        &master,
+        &mb->master,
         dataCallback,
         exceptionCallback,
         modbusDefaultAllocator,
@@ -303,100 +282,108 @@ BOOL ModbusInit(HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mod
 
     if (!modbusIsOk(err)) return FALSE;
 
+    /* Let the LightModbus callbacks find their way back to this instance */
+    modbusMasterSetUserPointer(&mb->master, mb);
+
     PR_INFO("ModBus: Init Master successfully\n");
-    pSerial = &serial;
-    baudrate = baud;
-    serial_config = rtu_mode;
-    txPin = tx_pin;
-    rxPin = rx_pin;
-    enPin = en_pin;
+    mb->serial = &serial;
+    mb->baudrate = baud;
+    mb->serial_config = rtu_mode;
+    mb->txPin = tx_pin;
+    mb->rxPin = rx_pin;
+    mb->enPin = en_pin;
+    mb->master_state = EM_IDLE;
     return TRUE;
 }
 
 /**
- * @brief Initializes the Porting Layer (RTU/Serial/Timer) with the stored
- * baud rate, serial config, UART TX/RX pins and RS485 driver-enable pin,
- * and starts the stack.
+ * @brief Initializes the Porting Layer (RTU/Serial/Timer) with the configuration
+ * stored in the instance, and starts the stack.
  */
-BOOL ModbusStart(void)
+BOOL ModbusStart(ModbusRS485 &inst)
 {
-    if (pSerial == NULL) return FALSE;
-    eMBErrorCode eStatus = eMBRTUInit(*pSerial, baudrate, serial_config, txPin, rxPin, enPin);
+    ModbusRS485 *mb = &inst;
+
+    if (mb->serial == NULL) return FALSE;
+    eMBErrorCode eStatus = eMBRTUInit(mb);
     if (eStatus != MB_ENOERR) return FALSE;
-    xMBPortEventInit();
-    eMBRTUStart();
+    xMBPortEventInit(mb);
+    eMBRTUStart(mb);
     return TRUE;
 }
 
 /**
  * @brief Frees resources and stops the Modbus stack.
  */
-void ModbusDestroy(void)
+void ModbusDestroy(ModbusRS485 &inst)
 {
-    modbusMasterDestroy(&master);
-    eMBRTUStop();
-    vMBPortEventDeinit();
+    ModbusRS485 *mb = &inst;
+
+    modbusMasterDestroy(&mb->master);
+    eMBRTUStop(mb);
+    vMBPortEventDeinit(mb);
     PR_INFO("ModBus: Destroy successfully\n");
 }
 
 /**
- * @brief Will be call from tasklet handler. 
+ * @brief Will be call from tasklet handler.
  */
-void ModbusRun(void)
+void ModbusRun(ModbusRS485 &inst)
 {
-    eMBMasterPoll();
+    eMBMasterPoll(&inst);
 }
 
 /**
  * @brief Higher-level API to initiate a Modbus request.
  */
-SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout)
+SendRetType ModbusSend(ModbusRS485 &inst, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout)
 {
+    ModbusRS485 *mb = &inst;
 	SendRetType ret_val = ESEND_NOERR;
-    eMBErrorCode send_err; 
+    eMBErrorCode send_err;
 	/* 0. Accquire the master lock*/
-	LOCK_MUTEX(master_lock);
-	ubRspLength = 0; /* Reset response length before start read */
+	LOCK_MUTEX(mb->master_lock);
+	mb->ubRspLength = 0; /* Reset response length before start read */
     /* 1. Build the PDU (Application Layer) */
-    if(buildreq(&master, function, startAddress, quantity))
+    if(buildreq(&mb->master, function, startAddress, quantity))
 	{
-		ret_val = ESEND_RQINVAL;	
+		ret_val = ESEND_RQINVAL;
 		goto out;
 	}
-    
+
     /* 2. Cache metadata for the upcoming response validation */
-    ucMBAddress = Address;
+    mb->ucMBAddress = Address;
 
     /* 3. Prepare and wating to recive or timeout*/
 	PR_INFO("ModbusSend: waiting\n");
-	send_err = send_and_wait_logic(timeout);
+	send_err = send_and_wait_logic(mb, timeout);
     /* 4.  Process continues here after wake-up
-	 * Parsing to read input 	
+	 * Parsing to read input
 	 * Application Layer: Parse the received PDU
 	 * */
 	if (send_err == MB_ETIMEDOUT)
 	{
 		/* Internal timer woke you up */
-		PR_INFO("Modbus Send: Request timeout\n");	
+		PR_INFO("Modbus Send: Request timeout\n");
 		ret_val = ESEND_TIMEOUT;
 	}
 	else
 	{
 		/* Wake up when receiving messes from slave */
-		PR_INFO("usLength:%d\n",usLength);
-		err = modbusParseResponsePDU(&master,
-							  ucMBAddress,
-							  modbusMasterGetRequest(&master),
-							  modbusMasterGetRequestLength(&master),
-							  pucMBFrame,
-							  usLength);
+		PR_INFO("usLength:%d\n",mb->usLength);
+		ModbusErrorInfo err = modbusParseResponsePDU(&mb->master,
+							  mb->ucMBAddress,
+							  modbusMasterGetRequest(&mb->master),
+							  modbusMasterGetRequestLength(&mb->master),
+							  mb->pucMBFrame,
+							  mb->usLength);
 
 		if (!modbusIsOk(err))
 		{
 			PR_ERR("Error parsing request: %s(%s)\n",
 				modbusErrorSourceStr(modbusGetErrorSource(err)),
 				modbusErrorStr(modbusGetErrorCode(err)));
-			ret_val = ESEND_RPINVAL;	
+			ret_val = ESEND_RPINVAL;
 		}
 		else
 		{
@@ -406,15 +393,16 @@ SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHOR
 	}
 out:
 	/* 7. Relase the master's lock */
-	master_state = EM_IDLE;
-	UNLOCK_MUTEX(master_lock);
+	mb->master_state = EM_IDLE;
+	UNLOCK_MUTEX(mb->master_lock);
 	return ret_val;
 }
 
-void ModbusReceive (UCHAR *buffer, USHORT *length)
+void ModbusReceive (ModbusRS485 &inst, UCHAR *buffer, USHORT *length)
 {
+    ModbusRS485 *mb = &inst;
     /* Lenght should be in number of bytes */
-	PR_INFO("Read %d registers from user\n",ubRspLength);
-	*length = ubRspLength * sizeof(*usRspone);
-	memcpy(buffer,(char*)usRspone, (size_t)*length);	
+	PR_INFO("Read %d registers from user\n",mb->ubRspLength);
+	*length = mb->ubRspLength * sizeof(*mb->usRspone);
+	memcpy(buffer,(char*)mb->usRspone, (size_t)*length);
 }

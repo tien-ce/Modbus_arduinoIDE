@@ -146,6 +146,9 @@ typedef uint8_t         UINT8;
 #define FALSE           false
 #endif
 
+/* One instance per RS485 bus, owned by the caller (full definition in mbinst.h) */
+struct ModbusRS485;
+
 /* Port function using kernel memcpy */
 static inline USHORT uiPortMemcpy(UCHAR *des, const UCHAR *src, USHORT length)
 {

@@ -12,13 +12,41 @@ separate:
   in `Include/mbport.h`/`Include/mbrtu.h`. This is the code that would be
   identical whether it runs on Linux, Arduino, or bare metal.
 - **Platform** = how a layer's porting contract is actually implemented for
-  one target. This is where `pthread_*`, `esp_timer_*`, `Serial2`,
-  `xTaskCreate`, `#if defined(ESP32)`, etc. are allowed to appear.
+  one target. This is where `pthread_*`, `esp_timer_*`, `HardwareSerial`,
+  `xTaskCreate`, etc. are allowed to appear.
+
+### One instance per RS485 bus (`ModbusRS485`)
+
+The library has **no file-scope state**. Everything a bus needs lives in one
+`ModbusRS485` struct (`src/mbinst.h`): the UART port and pins, the LightModbus
+master, the send mutex/condvar, request/response buffers, the RTU receive/send
+state machine and buffers, the T3.5 `esp_timer` handle, the event mailbox and
+the worker task handle. The caller owns the instance (keep it global/static) and
+passes it to every API call, so several buses can run side by side:
+
+```cpp
+static ModbusRS485 bus;
+ModbusInit(bus, Serial2, 9600, RTU_8N1, TX, RX, EN);
+ModbusStart(bus);
+ModbusSend(bus, slave, function, addr, qty, timeout_ms);
+ModbusReceive(bus, buf, &len);
+```
+
+Internally every layer function takes a `ModbusRS485 *mb` as its first
+argument. The places where the platform calls back without context carry the
+pointer along: the UART `onReceive` lambda captures `mb`, the `esp_timer`
+callback gets it through `arg`, the worker task through `pvParameters`, and the
+LightModbus callbacks through `modbusMasterSetUserPointer()`. Only the logging
+mutex (`print_mutex()` in `port.h`) is shared between buses. Initialising the
+same instance twice, or two instances on the same `HardwareSerial`, is not
+guarded against.
+
+See `examples/ReadInputRegister` (one bus) and `examples/TwoBuses` (two buses).
 
 ### The layers
 
 1. **Master / application layer — `modbus.cpp`**
-   Owns the LightModbus master instance, the public `Modbus*` API
+   Owns the public `Modbus*` API
    (`ModbusInit`/`Start`/`Send`/`Receive`/`Destroy`/`Run`), and the polling
    state machine `eMBMasterPoll()`. Talks to the layer below only through
    `eMBRTU*()` functions and the event mailbox (`xMBPortEvent*()`) — never
@@ -55,12 +83,11 @@ separate:
   (ISR-safe via `vTaskNotifyGiveFromISR` when called from interrupt
   context). A Linux platform would implement the same `xMBPortEvent*`
   contract with a pthread mutex/condvar queue instead.
-- `port_timer.cpp` — two platform implementations selected by
-  `#if defined(ESP32)`: a hardware `esp_timer` one-shot timer for ESP32,
-  and a `micros()`-based cooperative-polling fallback
-  (`vMBPortTimersPoll()`, meant to be called from `loop()`) for plain
-  AVR/Arduino boards without `esp_timer`.
-- `port_uart.cpp` — ESP32/Arduino `Serial2` hardware UART.
+- `port_timer.cpp` — ESP32 `esp_timer` one-shot timer (one per instance) for
+  the t3.5 silence. The library is ESP32-only (`mbinst.h` has an `#error` on
+  other targets), so nothing needs to be polled from `loop()`.
+- `port_uart.cpp` — ESP32/Arduino `HardwareSerial` (any port, e.g. `Serial1`/
+  `Serial2`, passed to `ModbusInit`).
 - `Include/port.h` — cross-cutting platform primitives shared by every
   layer: logging (`PR_INFO`/`PR_ERR`, `Serial.printf` vs. `printf`),
   mutex/condvar macros (`DEFINE_MUTEX`/`LOCK_MUTEX`/`UNLOCK_MUTEX`,
@@ -71,18 +98,18 @@ separate:
 ### Call graph (how a request actually flows through the layers)
 
 ```
-ModbusSend()                              [master]
+ModbusSend(bus, ...)                      [master]
   -> send_and_wait_logic()                [master]
        -> xMBPortEventPost(EV_MASTER_SEND_REQUEST)   [platform: event]
        -> COND_WAIT_TIMEOUT(...)                     [platform: port.h]
                                     (worker task wakes)
-prvModbusWorkerTask -> ModbusRun() -> eMBMasterPoll() [master]
+prvModbusWorkerTask(mb) -> ModbusRun(*mb) -> eMBMasterPoll(mb) [master]
   case EV_MASTER_SEND_REQUEST:
     -> eMBRTUSend()                        [RTU link]
          -> vMBPortUartWrite()             [platform: uart]
 
 (byte arrives on the wire, UART ISR fires)
-Serial2 receive callback -> xMBRTUReceiveFSM()   [RTU link, ISR context]
+HardwareSerial onReceive callback -> xMBRTUReceiveFSM(mb)   [RTU link, ISR context]
   -> vMBPortUartRead()                     [platform: uart]
   -> vMBPortTimersStart()                  [platform: timer]
 

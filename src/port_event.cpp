@@ -21,20 +21,16 @@
  */
 
 #include "mbport.h"
+#include "mbinst.h"
 #include "modbus.h"
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-/* Static variables */
-static volatile eMBEventType eQueuedEvent;
-static volatile bool xEventInQueue = false;
-static TaskHandle_t xMBTaskHandle = NULL;
-
-/* Worker Task Function */
+/* Worker Task Function; pvParameters is the owning ModbusRS485 */
 static void prvModbusWorkerTask(void *pvParameters)
 {
-    (void)pvParameters;
+    ModbusRS485 *mb = (ModbusRS485 *)pvParameters;
 
     /* FreeRTOS tasks must run in an infinite loop */
     for (;;) 
@@ -47,27 +43,27 @@ static void prvModbusWorkerTask(void *pvParameters)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         /* Process pending Modbus events */
-        ModbusRun();
+        ModbusRun(*mb);
     }
 }
 
-bool xMBPortEventInit(void)
+bool xMBPortEventInit(ModbusRS485 *mb)
 {
-    xEventInQueue = false;
+    mb->xEventInQueue = false;
 
     /* 
      * Check if the worker task has already been created.
      * If xMBTaskHandle is NULL, the task does not exist yet, so we create it.
      * If xMBTaskHandle is NOT NULL, we skip creation to avoid duplicate tasks.
      */
-    if (xMBTaskHandle == NULL) {
+    if (mb->xMBTaskHandle == NULL) {
         BaseType_t xReturned = xTaskCreate(
             prvModbusWorkerTask,      /* Task function entry point */
             "MB_Worker",              /* Text name for debugging */
             2048,                     /* Stack size in words */
-            NULL,                     /* Task input parameter */
+            mb,                       /* Task input parameter */
             configMAX_PRIORITIES - 1, /* Highest user priority */
-            &xMBTaskHandle            /* Stores the created task's handle here */
+            &mb->xMBTaskHandle        /* Stores the created task's handle here */
         );
 
         /* Return false if memory allocation failed for the task */
@@ -80,45 +76,45 @@ bool xMBPortEventInit(void)
     return true;
 }
 
-bool xMBPortEventPost(eMBEventType eEvent)
+bool xMBPortEventPost(ModbusRS485 *mb, eMBEventType eEvent)
 {
     /* Critical section protection for state variables */
-    xEventInQueue = true;
-    eQueuedEvent = eEvent;
+    mb->xEventInQueue = true;
+    mb->eQueuedEvent = eEvent;
 
     /* 
      * Ensure the task actually exists before trying to send a notification.
      * If xMBTaskHandle is NULL, xTaskCreate hasn't run or failed.
      */
-    if (xMBTaskHandle != NULL) {
+    if (mb->xMBTaskHandle != NULL) {
         
         /* Check if we are currently inside an Interrupt Service Routine (ISR) */
         if (xPortInIsrContext()) {
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             
             /* Send notification safely from ISR context */
-            vTaskNotifyGiveFromISR(xMBTaskHandle, &xHigherPriorityTaskWoken);
+            vTaskNotifyGiveFromISR(mb->xMBTaskHandle, &xHigherPriorityTaskWoken);
             
             /* Force context switch if a higher priority task was woken */
             portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
         } else {
             /* Send notification from a standard task/thread context */
-            xTaskNotifyGive(xMBTaskHandle);
+            xTaskNotifyGive(mb->xMBTaskHandle);
         }
     }
 
     return true;
 }
 
-bool xMBPortEventGet(eMBEventType *eEvent)
+bool xMBPortEventGet(ModbusRS485 *mb, eMBEventType *eEvent)
 {
     bool xEventHappened = false;
     /* If event occur, (set by post) */
-    if (xEventInQueue) {
+    if (mb->xEventInQueue) {
         /* copy event type */
-        *eEvent = eQueuedEvent;
+        *eEvent = mb->eQueuedEvent;
         /* Clear flag to reset single entry queue */
-        xEventInQueue = false;
+        mb->xEventInQueue = false;
         /* Set xEvent hapened = True */
         xEventHappened = true;
     }
@@ -128,11 +124,11 @@ bool xMBPortEventGet(eMBEventType *eEvent)
 /**
  * @brief Clean up task handle on de-initialization
  */
-void vMBPortEventDeinit(void)
+void vMBPortEventDeinit(ModbusRS485 *mb)
 {
-    if (xMBTaskHandle != NULL) {
-        vTaskDelete(xMBTaskHandle);
-        xMBTaskHandle = NULL;
+    if (mb->xMBTaskHandle != NULL) {
+        vTaskDelete(mb->xMBTaskHandle);
+        mb->xMBTaskHandle = NULL;
     }
     Serial.println("Modbus Event: Destroy");
 }

@@ -20,27 +20,30 @@
 #define RS485_RX_PIN      18
 #define RS485_EN_PIN      21     // -1 if the transceiver has no DE/RE pin to control
 
+// One instance holds all the state of one RS485 bus; keep it global/static.
+static ModbusRS485 bus;
+
 void setup() {
     Serial.begin(115200);
 
-    bool ok = ModbusInit(Serial2, 9600, RTU_8N1, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
+    bool ok = ModbusInit(bus, Serial2, 9600, RTU_8N1, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
     if (!ok) {
         Serial.println("Init Modbus failed!");
         return;
     }
 
     Serial.println("Init Modbus successfully");
-    (void)ModbusStart();
+    (void)ModbusStart(bus);
 }
 
 void loop() {
     // Send request to read 1 Input Register with a 200ms response timeout
-    SendRetType ret = ModbusSend(SLAVE_ID, READ_INPUT_REG, INPUT_REG_ADDR, 1, 200);
+    SendRetType ret = ModbusSend(bus, SLAVE_ID, READ_INPUT_REG, INPUT_REG_ADDR, 1, 200);
 
     if (ret == ESEND_NOERR) {
         UCHAR rx_buf[256];
         USHORT rx_len = 0;
-        ModbusReceive(rx_buf, &rx_len);
+        ModbusReceive(bus, rx_buf, &rx_len);
 
         if (rx_len >= 2) {
             // ModbusReceive() returns register bytes in Modbus (big-endian) order

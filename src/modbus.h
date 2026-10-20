@@ -31,6 +31,7 @@
 #define _MODBUS_H
 
 #include "port.h"
+#include "mbinst.h"
 
 /* Result of a ModbusSend() call. */
 typedef enum
@@ -54,25 +55,29 @@ static inline const CHAR *ModbusErrToStr(SendRetType ret)
     }
 }
 
-/* Initializes the LightModbus master stack and stores baud rate/UART TX-RX pins for ModbusStart().
+/* Every call below works on the ModbusRS485 instance the caller passes in, so
+ * several RS485 buses can run at the same time, one instance each. The instance
+ * must outlive the stack (declare it global/static, not on a short-lived stack). */
+
+/* Initializes the LightModbus master stack and stores baud rate/UART TX-RX pins in mb for ModbusStart().
  * enPin is the RS485 transceiver's driver-enable (DE/RE) pin; pass -1 (default) if the
  * transceiver auto-directions itself and no pin needs to be toggled.
  * serial is the HardwareSerial port to run Modbus on (e.g. Serial1, Serial2). */
-BOOL        ModbusInit(HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin = -1);
+BOOL        ModbusInit(ModbusRS485 &mb, HardwareSerial &serial, ULONG baud, ModbusSerialConfig_t rtu_mode, INT txPin, INT rxPin, INT enPin = -1);
 
 /* Initializes the porting layer (RTU/serial/timer) and starts the stack. */
-BOOL        ModbusStart(void);
+BOOL        ModbusStart(ModbusRS485 &mb);
 
 /* Frees resources and stops the Modbus stack. */
-void        ModbusDestroy(void);
+void        ModbusDestroy(ModbusRS485 &mb);
 
 /* Runs one iteration of the master's event/poll loop; called from the event worker task. */
-void        ModbusRun(void);
+void        ModbusRun(ModbusRS485 &mb);
 
 /* Builds and sends a request, blocking until a response or timeout. */
-SendRetType ModbusSend(UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout);
+SendRetType ModbusSend(ModbusRS485 &mb, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout);
 
 /* Copies the last successfully parsed response out to the caller. */
-void ModbusReceive (UCHAR *buffer, USHORT *length);
+void ModbusReceive (ModbusRS485 &mb, UCHAR *buffer, USHORT *length);
 
 #endif /* _MODBUS_H */
