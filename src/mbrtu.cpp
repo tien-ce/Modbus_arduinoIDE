@@ -110,8 +110,9 @@ eMBRTUStart( ModbusRS485 *mb )
 void
 eMBRTUStop( ModbusRS485 *mb )
 {
-	(void)mb;
 	ENTER_CRITICAL_SECTION(  );
+	vMBPortTimersCancel( mb );
+	vMBPortUartDeinit( mb );
 	PR_INFO("ModBusRTU: Destroy sucessfully\n");
 	EXIT_CRITICAL_SECTION(  );
 }

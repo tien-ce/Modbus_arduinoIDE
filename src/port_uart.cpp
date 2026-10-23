@@ -60,6 +60,13 @@ bool xMBPortUartInit( ModbusRS485 *mb )
     return true;
 }
 
+void vMBPortUartDeinit( ModbusRS485 *mb )
+{
+    if (mb->serial == NULL) return;
+
+    mb->serial->end();
+}
+
 void vMBPortUartRead (ModbusRS485 *mb, uint8_t *buffer, int *length)
 {
     HardwareSerial *serial = mb->serial;

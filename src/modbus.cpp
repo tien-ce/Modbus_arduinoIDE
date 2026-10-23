@@ -158,8 +158,9 @@ static INT buildreq(ModbusMaster *master, UCHAR function, USHORT startAddress, U
             break;
 
         default:
-            /* Unsupported function codes */
-            break;
+            /* Unsupported function codes: don't send a stale request */
+            PR_ERR("Unsupported function code %d\n", function);
+            return 1;
     }
 
     if (!modbusIsOk(err))

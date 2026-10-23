@@ -96,4 +96,7 @@ void            vMBPortUartWrite ( ModbusRS485 *mb, UCHAR *buffer, USHORT usLeng
 /* Opens mb->serial using the baud/config/pins stored in mb. */
 BOOL            xMBPortUartInit( ModbusRS485 *mb );
 
+/* Closes mb->serial (HardwareSerial::end()). */
+void            vMBPortUartDeinit( ModbusRS485 *mb );
+
 #endif
