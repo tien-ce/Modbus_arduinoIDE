@@ -40,7 +40,8 @@ typedef enum
     ESEND_RQINVAL,            /*!< Failed to build the request PDU. */
     ESEND_TIMEOUT,            /*!< No response received before timeout. */
     ESEND_RPINVAL,            /*!< Failed to parse the response PDU. */
-    ESEND_BUFSMALL            /*!< Caller's buffer too small for the response (ModbusSendReceive). */
+    ESEND_BUFSMALL,           /*!< Caller's buffer too small for the response (ModbusSendReceive). */
+    ESEND_EXCEPTION           /*!< Slave answered with an exception; its 1-byte code is the response data (length 1). */
 } SendRetType;
 
 /* Human-readable string for a SendRetType, e.g. for logging a ModbusSend() result. */
@@ -53,6 +54,7 @@ static inline const CHAR *ModbusErrToStr(SendRetType ret)
         case ESEND_TIMEOUT: return "Timeout";
         case ESEND_RPINVAL: return "Invalid response";
         case ESEND_BUFSMALL: return "Buffer too small";
+        case ESEND_EXCEPTION: return "Slave exception";
         default:            return "Unknown error";
     }
 }

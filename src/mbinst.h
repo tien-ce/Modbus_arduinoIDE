@@ -86,6 +86,8 @@ struct ModbusRS485
     UCHAR                   ucMBAddress = 0;    /* Target Slave Address for current transaction */
     USHORT                  usRspone[MAX_VALUE_RESPONE];    /* Return respone for device (filled by data callback) */
     UINT8                   ubRspLength = 0;                /* Length of return respone */
+    bool                    xException = false;             /* Slave answered with an exception (set by exception callback) */
+    UCHAR                   ucException = 0;                /* Exception code returned by the slave */
     UCHAR                   pucMBFrame[MAX_PDU_SIZE];       /* Value from RTU Layer before it goes into step parsing */
     USHORT                  usLength = 0;
     eMasterType             master_state = EM_IDLE;

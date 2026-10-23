@@ -86,6 +86,9 @@ static ModbusError dataCallback(const ModbusMaster *master, const ModbusDataCall
  */
 static ModbusError exceptionCallback(const ModbusMaster *master, uint8_t address, uint8_t function, ModbusExceptionCode code)
 {
+    ModbusRS485 *mb = (ModbusRS485 *)modbusMasterGetUserPointer(master);
+    mb->xException = true;
+    mb->ucException = (UCHAR)code;
     PR_INFO(
         "EXCEPTION SLAVE: %03d, F: %03d, CODE: %03d\n",
         address,
@@ -320,9 +323,14 @@ void ModbusDestroy(ModbusRS485 &inst)
 {
     ModbusRS485 *mb = &inst;
 
+    /* Wait for an in-flight ModbusSend() to finish (it holds master_lock for the
+     * whole transaction) before tearing down what it is using. The worker task
+     * must stay alive until then, so it is only deleted after we own the lock. */
+    LOCK_MUTEX(mb->master_lock);
     modbusMasterDestroy(&mb->master);
     eMBRTUStop(mb);
     vMBPortEventDeinit(mb);
+    UNLOCK_MUTEX(mb->master_lock);
     PR_INFO("ModBus: Destroy successfully\n");
 }
 
@@ -349,6 +357,7 @@ static SendRetType modbus_transfer(ModbusRS485 *mb, UCHAR Address, UCHAR functio
 	/* 0. Accquire the master lock*/
 	LOCK_MUTEX(mb->master_lock);
 	mb->ubRspLength = 0; /* Reset response length before start read */
+	mb->xException = false;
     /* 1. Build the PDU (Application Layer) */
     if(buildreq(&mb->master, function, startAddress, quantity))
 	{
@@ -397,7 +406,18 @@ static SendRetType modbus_transfer(ModbusRS485 *mb, UCHAR Address, UCHAR functio
 
 			/* Copy the response out while still holding the master lock, so
 			 * another thread's request can't overwrite usRspone first. */
-			if (out != NULL && outLen != NULL)
+			if (mb->xException)
+			{
+				/* Slave answered with an exception: report it, and hand the
+				 * 1-byte exception code to the caller as the data. */
+				ret_val = ESEND_EXCEPTION;
+				if (out != NULL && outLen != NULL && out_cap >= 1)
+				{
+					out[0] = mb->ucException;
+					*outLen = 1;
+				}
+			}
+			else if (out != NULL && outLen != NULL)
 			{
 				USHORT bytes = (USHORT)(mb->ubRspLength * sizeof(*mb->usRspone));
 				if (bytes > out_cap)
@@ -441,6 +461,13 @@ SendRetType ModbusSendReceive(ModbusRS485 &inst, UCHAR Address, UCHAR function, 
 void ModbusReceive (ModbusRS485 &inst, UCHAR *buffer, USHORT *length)
 {
     ModbusRS485 *mb = &inst;
+    if (mb->xException)
+    {
+        /* Last response was an exception: data is the 1-byte exception code */
+        buffer[0] = mb->ucException;
+        *length = 1;
+        return;
+    }
     /* Lenght should be in number of bytes */
 	PR_INFO("Read %d registers from user\n",mb->ubRspLength);
 	*length = mb->ubRspLength * sizeof(*mb->usRspone);
