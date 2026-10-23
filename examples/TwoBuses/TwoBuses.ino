@@ -32,16 +32,17 @@ static ModbusRS485 bus2;
 // Reads one register from a slave on the given bus and prints it.
 static void pollRegister(const char *name, ModbusRS485 &bus, UCHAR slave, UCHAR function, USHORT addr)
 {
-    SendRetType ret = ModbusSend(bus, slave, function, addr, 1, 200);
+    // ModbusSendReceive() copies the response into rx_buf before the bus is
+    // released, so it is safe even if several tasks share the same bus.
+    // (ModbusSend() + ModbusReceive() still work for a single-task user.)
+    UCHAR rx_buf[256];
+    USHORT rx_len = sizeof(rx_buf);   // in: capacity, out: bytes copied
+    SendRetType ret = ModbusSendReceive(bus, slave, function, addr, 1, 200, rx_buf, &rx_len);
 
     if (ret != ESEND_NOERR) {
         Serial.printf("[%s] Modbus Send Error: %s\n", name, ModbusErrToStr(ret));
         return;
     }
-
-    UCHAR rx_buf[256];
-    USHORT rx_len = 0;
-    ModbusReceive(bus, rx_buf, &rx_len);
 
     if (rx_len >= 2) {
         // ModbusReceive() returns register bytes in Modbus (big-endian) order

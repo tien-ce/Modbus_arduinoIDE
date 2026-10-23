@@ -334,13 +334,17 @@ void ModbusRun(ModbusRS485 &inst)
 }
 
 /**
- * @brief Higher-level API to initiate a Modbus request.
+ * @brief Shared implementation of ModbusSend() and ModbusSendReceive().
+ * @param out    Optional caller buffer; when not NULL the response bytes are
+ *               copied into it *before* the master lock is released.
+ * @param outLen In: capacity of out in bytes. Out: bytes copied (0 on failure).
  */
-SendRetType ModbusSend(ModbusRS485 &inst, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout)
+static SendRetType modbus_transfer(ModbusRS485 *mb, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout, UCHAR *out, USHORT *outLen)
 {
-    ModbusRS485 *mb = &inst;
 	SendRetType ret_val = ESEND_NOERR;
     eMBErrorCode send_err;
+	USHORT out_cap = (out != NULL && outLen != NULL) ? *outLen : 0;
+	if (outLen != NULL) *outLen = 0;
 	/* 0. Accquire the master lock*/
 	LOCK_MUTEX(mb->master_lock);
 	mb->ubRspLength = 0; /* Reset response length before start read */
@@ -389,6 +393,22 @@ SendRetType ModbusSend(ModbusRS485 &inst, UCHAR Address, UCHAR function, USHORT 
 		{
 			PR_INFO("Response parsing successfully\n");
 			ret_val = ESEND_NOERR;
+
+			/* Copy the response out while still holding the master lock, so
+			 * another thread's request can't overwrite usRspone first. */
+			if (out != NULL && outLen != NULL)
+			{
+				USHORT bytes = (USHORT)(mb->ubRspLength * sizeof(*mb->usRspone));
+				if (bytes > out_cap)
+				{
+					ret_val = ESEND_BUFSMALL;
+				}
+				else
+				{
+					memcpy(out, (char*)mb->usRspone, (size_t)bytes);
+					*outLen = bytes;
+				}
+			}
 		}
 	}
 out:
@@ -396,6 +416,25 @@ out:
 	mb->master_state = EM_IDLE;
 	UNLOCK_MUTEX(mb->master_lock);
 	return ret_val;
+}
+
+/**
+ * @brief Higher-level API to initiate a Modbus request.
+ * The response stays in the instance; fetch it with ModbusReceive().
+ */
+SendRetType ModbusSend(ModbusRS485 &inst, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout)
+{
+	return modbus_transfer(&inst, Address, function, startAddress, quantity, timeout, NULL, NULL);
+}
+
+/**
+ * @brief Sends a request and copies the response into the caller's buffer in
+ * one atomic step (the master lock is held until the copy is done).
+ */
+SendRetType ModbusSendReceive(ModbusRS485 &inst, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout, UCHAR *buffer, USHORT *length)
+{
+	if (buffer == NULL || length == NULL) return ESEND_RQINVAL;
+	return modbus_transfer(&inst, Address, function, startAddress, quantity, timeout, buffer, length);
 }
 
 void ModbusReceive (ModbusRS485 &inst, UCHAR *buffer, USHORT *length)

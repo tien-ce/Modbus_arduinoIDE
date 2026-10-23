@@ -39,7 +39,8 @@ typedef enum
     ESEND_NOERR = 0,         /*!< Request sent and response parsed successfully. */
     ESEND_RQINVAL,            /*!< Failed to build the request PDU. */
     ESEND_TIMEOUT,            /*!< No response received before timeout. */
-    ESEND_RPINVAL             /*!< Failed to parse the response PDU. */
+    ESEND_RPINVAL,            /*!< Failed to parse the response PDU. */
+    ESEND_BUFSMALL            /*!< Caller's buffer too small for the response (ModbusSendReceive). */
 } SendRetType;
 
 /* Human-readable string for a SendRetType, e.g. for logging a ModbusSend() result. */
@@ -51,6 +52,7 @@ static inline const CHAR *ModbusErrToStr(SendRetType ret)
         case ESEND_RQINVAL: return "Invalid request";
         case ESEND_TIMEOUT: return "Timeout";
         case ESEND_RPINVAL: return "Invalid response";
+        case ESEND_BUFSMALL: return "Buffer too small";
         default:            return "Unknown error";
     }
 }
@@ -77,7 +79,15 @@ void        ModbusRun(ModbusRS485 &mb);
 /* Builds and sends a request, blocking until a response or timeout. */
 SendRetType ModbusSend(ModbusRS485 &mb, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout);
 
-/* Copies the last successfully parsed response out to the caller. */
+/* Copies the last successfully parsed response out to the caller. The response lives in mb,
+ * so with several threads sharing a bus another request may overwrite it between
+ * ModbusSend() and ModbusReceive(); use ModbusSendReceive() in that case. */
 void ModbusReceive (ModbusRS485 &mb, UCHAR *buffer, USHORT *length);
+
+/* Builds and sends a request and copies the response into buffer before releasing the bus,
+ * so no other thread can interleave between the send and the copy.
+ * length: in = capacity of buffer in bytes, out = bytes copied (0 on failure).
+ * Returns ESEND_BUFSMALL (nothing copied) if the response doesn't fit. */
+SendRetType ModbusSendReceive(ModbusRS485 &mb, UCHAR Address, UCHAR function, USHORT startAddress, USHORT quantity, INT timeout, UCHAR *buffer, USHORT *length);
 
 #endif /* _MODBUS_H */
